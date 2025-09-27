@@ -1,21 +1,46 @@
 import React, { useState, useEffect } from 'react';
-import { MapContainer, TileLayer, Polyline, Marker, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, Polyline, Marker, Popup, useMapEvents } from 'react-leaflet';
 import type { RoutePoint } from '../types';
 
 interface MapProps {
   routePoints: RoutePoint[];
+  onMapClick?: (latlng: { lat: number; lng: number }) => void;
+  markerPosition?: [number, number];
+  interactive?: boolean;
 }
 
 const NYERI_COUNTY: [number, number] = [-0.4201, 36.9476];
 
-const Map: React.FC<MapProps> = ({ routePoints }) => {
+const MapClickHandler: React.FC<{ onMapClick: (latlng: { lat: number; lng: number }) => void }> = ({ onMapClick }) => {
+  useMapEvents({
+    click(e) {
+      onMapClick(e.latlng);
+    },
+  });
+  return null;
+};
+
+const Map: React.FC<MapProps> = ({ routePoints, onMapClick, markerPosition, interactive = false }) => {
   const [center, setCenter] = useState<[number, number]>(NYERI_COUNTY);
   const [userPosition, setUserPosition] = useState<[number, number] | null>(null);
   const [zoom, setZoom] = useState(12);
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [locationError, setLocationError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Only fetch location if there's no ride in progress to set an initial view.
-    if (routePoints.length === 0) {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    // Only fetch location if no route/markers are provided, to set an initial view.
+    if (routePoints.length === 0 && !markerPosition) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
           const { latitude, longitude } = position.coords;
@@ -23,50 +48,84 @@ const Map: React.FC<MapProps> = ({ routePoints }) => {
           setCenter(userLocation);
           setUserPosition(userLocation);
           setZoom(15);
+          setLocationError(null); // Clear error on success
         },
         (error) => {
           console.error("Geolocation error:", error.message);
+          let errorMessage = "Could not get your location. Displaying default map area.";
           if (error.code === error.PERMISSION_DENIED) {
-            alert("Location permission was denied. The map will default to Nyeri County.");
+             errorMessage = "Location access denied. Please enable permissions in your browser settings.";
+             if(error.message && error.message.toLowerCase().includes('permissions policy')) {
+                errorMessage = "Geolocation is disabled by a permissions policy. Please check browser/site settings.";
+             }
           }
-          // Default to Nyeri County if permission is denied or location is unavailable
+          setLocationError(errorMessage);
           setCenter(NYERI_COUNTY);
           setZoom(12);
         },
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
       );
     }
-  }, []); // Empty dependency array means this runs once on mount.
+  }, [routePoints.length, markerPosition]);
 
   const positions = routePoints.map(p => [p.lat, p.lng] as [number, number]);
-  // If there are route points, center on the first point of the route. Otherwise, use the state 'center'.
-  const mapCenter: [number, number] = positions.length > 0 ? positions[0] : center;
   
-  return (
-    <MapContainer center={mapCenter} zoom={positions.length > 0 ? 15 : zoom} scrollWheelZoom={true} style={{ height: '100%', width: '100%' }} key={mapCenter.join(',')}>
-      <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-      />
-      {/* Marker for initial user location if no ride has started */}
-      {userPosition && positions.length === 0 && (
-          <Marker position={userPosition}>
-              <Popup>Your Location</Popup>
-          </Marker>
-      )}
+  let mapCenter: [number, number] = center;
+  if(positions.length > 0) {
+      mapCenter = positions[positions.length - 1]; // Center on the latest point
+  } else if (markerPosition) {
+      mapCenter = markerPosition;
+  }
 
-      {positions.length > 0 && (
-        <>
-            <Marker position={positions[0]}>
-                <Popup>Starting Point</Popup>
-            </Marker>
-            <Polyline pathOptions={{ color: '#facc15' }} positions={positions} />
-            <Marker position={positions[positions.length - 1]}>
-                <Popup>Current Location</Popup>
-            </Marker>
-        </>
+  let mapZoom = zoom;
+  if(positions.length > 0 || markerPosition) {
+      mapZoom = 15;
+  }
+
+  return (
+    <div className="relative h-full w-full">
+      {isOffline && (
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[1000] bg-yellow-500 text-white text-xs font-semibold px-3 py-1 rounded-full shadow-lg">
+          You are offline. Only cached map areas will be shown.
+        </div>
       )}
-    </MapContainer>
+      {locationError && (
+        <div className="absolute top-12 left-1/2 -translate-x-1/2 z-[1000] bg-red-500 text-white text-sm font-semibold px-4 py-2 rounded-lg shadow-lg max-w-[90%] text-center">
+          {locationError}
+        </div>
+      )}
+      <MapContainer center={mapCenter} zoom={mapZoom} scrollWheelZoom={true} style={{ height: '100%', width: '100%' }} key={mapCenter.join(',')}>
+        <TileLayer
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
+        {onMapClick && <MapClickHandler onMapClick={onMapClick} />}
+
+        {userPosition && positions.length === 0 && !markerPosition && (
+          <Marker position={userPosition}>
+            <Popup>Your Location</Popup>
+          </Marker>
+        )}
+
+        {markerPosition && (
+          <Marker position={markerPosition}>
+            <Popup>{interactive ? "Selected Point" : "Location"}</Popup>
+          </Marker>
+        )}
+
+        {positions.length > 0 && (
+          <>
+            <Marker position={positions[0]}>
+              <Popup>Starting Point</Popup>
+            </Marker>
+            <Polyline pathOptions={{ color: '#facc15', weight: 5 }} positions={positions} />
+            <Marker position={positions[positions.length - 1]}>
+              <Popup>Current Location</Popup>
+            </Marker>
+          </>
+        )}
+      </MapContainer>
+    </div>
   );
 };
 

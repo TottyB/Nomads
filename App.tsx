@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Welcome from './components/Welcome';
 import Navbar from './components/Navbar';
@@ -26,14 +26,26 @@ const useTheme = () => {
 };
 
 const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [theme, setTheme] = useLocalStorage<Theme>('theme', 
-    window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-  );
+  const [theme, setTheme] = useState<Theme>(() => {
+    const storedTheme = localStorage.getItem('theme');
+    // Check for valid theme values to prevent unexpected behavior
+    if (storedTheme === 'light' || storedTheme === 'dark') {
+        return storedTheme;
+    }
+    // Fallback to system preference
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
 
   useEffect(() => {
     const root = window.document.documentElement;
-    root.classList.remove(theme === 'dark' ? 'light' : 'dark');
-    root.classList.add(theme);
+    // The 'dark' class is what Tailwind CSS uses to apply dark mode styles.
+    if (theme === 'dark') {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+    // Persist the user's choice in localStorage.
+    localStorage.setItem('theme', theme);
   }, [theme]);
   
   const toggleTheme = () => {
@@ -46,6 +58,7 @@ const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     </ThemeContext.Provider>
   );
 };
+
 
 // --- Header Component ---
 const Header: React.FC = () => {
