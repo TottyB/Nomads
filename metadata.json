@@ -1,0 +1,5 @@
+{
+  "name": "Nomads Bikers",
+  "description": "A Progressive Web App for the Nomads Bikers group to schedule rides, track routes with GPS, and manage the team. The app works offline and stores all data locally.",
+  "requestFramePermissions": []
+}
