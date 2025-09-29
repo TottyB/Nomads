@@ -24,3 +24,10 @@ export interface TeamMember {
   id: string;
   contact: string; // email or phone
 }
+
+export interface ChatMessage {
+  id: string;
+  text: string;
+  sender: string;
+  timestamp: number;
+}
