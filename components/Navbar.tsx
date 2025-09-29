@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { CalendarIcon, MapPinIcon, UsersIcon } from './Icons';
+import { CalendarIcon, MapPinIcon, UsersIcon, ChatBubbleIcon } from './Icons';
 
 const Navbar: React.FC = () => {
   const linkClasses = "flex flex-col items-center justify-center w-full h-full transition-colors duration-200";
@@ -16,11 +16,15 @@ const Navbar: React.FC = () => {
         </NavLink>
         <NavLink to="/record" className={({ isActive }) => `${linkClasses} ${isActive ? activeLinkClasses : inactiveLinkClasses}`}>
           <MapPinIcon className="w-7 h-7 mb-1" />
-          <span className="text-xs font-medium">Record Ride</span>
+          <span className="text-xs font-medium">Record</span>
         </NavLink>
         <NavLink to="/team" className={({ isActive }) => `${linkClasses} ${isActive ? activeLinkClasses : inactiveLinkClasses}`}>
           <UsersIcon className="w-7 h-7 mb-1" />
-          <span className="text-xs font-medium">Team</span>
+          <span className="text-xs font-medium">Crew</span>
+        </NavLink>
+        <NavLink to="/chat" className={({ isActive }) => `${linkClasses} ${isActive ? activeLinkClasses : inactiveLinkClasses}`}>
+          <ChatBubbleIcon className="w-7 h-7 mb-1" />
+          <span className="text-xs font-medium">Chat</span>
         </NavLink>
       </div>
     </nav>

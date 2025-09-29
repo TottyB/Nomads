@@ -1,113 +1,114 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import Map from './Map';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import type { Ride, RoutePoint } from '../types';
 import { calculateTotalDistance, formatDuration } from '../utils/geolocation';
-// Fix: Import `MotorcycleIcon` to resolve 'Cannot find name' error.
-import { MotorcycleIcon } from './Icons';
+import { MotorcycleIcon, ClockIcon, RouteIcon } from './Icons';
 
 const RecordRide: React.FC = () => {
   const [rides, setRides] = useLocalStorage<Ride[]>('rides', []);
-  const [duration, setDuration] = useState(0);
+  const [liveDuration, setLiveDuration] = useState(0);
   const [geolocationError, setGeolocationError] = useState<string | null>(null);
-
-  const watchId = useRef<number | null>(null);
-  const timerId = useRef<number | null>(null);
 
   const location = useLocation();
   const rideId = new URLSearchParams(location.search).get('rideId');
 
   // --- Derived State ---
-  const currentRide = rides.find(r => r.id === rideId) || null;
-  const isRecording = !!currentRide?.startTime && !currentRide?.endTime;
-  const distance = currentRide ? calculateTotalDistance(currentRide.routePoints) : 0;
+  const currentRide = useMemo(() => rides.find(r => r.id === rideId) || null, [rides, rideId]);
+  const isRecording = useMemo(() => !!currentRide?.startTime && !currentRide?.endTime, [currentRide]);
+  const distance = useMemo(() => (currentRide ? calculateTotalDistance(currentRide.routePoints) : 0), [currentRide]);
+  const duration = useMemo(() => {
+    if (!currentRide?.startTime) return 0;
+    if (currentRide.endTime) return currentRide.endTime - currentRide.startTime;
+    return liveDuration;
+  }, [currentRide, liveDuration]);
+  
+  const hasStarted = !!currentRide?.startTime;
+  const isFinished = !!currentRide?.endTime;
 
   // --- Actions ---
   const updateRide = useCallback((rideData: Partial<Ride>) => {
     setRides(prevRides =>
-      prevRides.map(r => r.id === rideId ? { ...r, ...rideData } : r)
+      prevRides.map(r => (r.id === rideId ? { ...r, ...rideData } : r))
     );
   }, [rideId, setRides]);
 
-  const startRecording = () => {
+  const startRecording = useCallback(() => {
     if (!currentRide) return;
     setGeolocationError(null);
     updateRide({
       routePoints: [],
       startTime: Date.now(),
-      endTime: undefined
+      endTime: undefined,
     });
-    setDuration(0);
-  };
+    setLiveDuration(0);
+  }, [currentRide, updateRide]);
 
   const stopRecording = useCallback(() => {
     updateRide({ endTime: Date.now() });
   }, [updateRide]);
 
   // --- Effects ---
+  // Effect for live duration timer
   useEffect(() => {
-    if (watchId.current) navigator.geolocation.clearWatch(watchId.current);
-    if (timerId.current) clearInterval(timerId.current);
-    watchId.current = null;
-    timerId.current = null;
-
+    let timerId: number | null = null;
     if (isRecording && currentRide?.startTime) {
-      setDuration(Date.now() - currentRide.startTime);
-
-      timerId.current = window.setInterval(() => {
-        setDuration(Date.now() - currentRide.startTime!);
+      setLiveDuration(Date.now() - currentRide.startTime); // Set initial duration immediately
+      timerId = window.setInterval(() => {
+        setLiveDuration(Date.now() - currentRide!.startTime!);
       }, 1000);
-
-      watchId.current = navigator.geolocation.watchPosition(
-        (position) => {
-          const newPoint: RoutePoint = {
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-            timestamp: position.timestamp,
-          };
-          setRides(prevRides =>
-            prevRides.map(r =>
-              r.id === rideId
-                ? { ...r, routePoints: [...r.routePoints, newPoint] }
-                : r
-            )
-          );
-        },
-        (error) => {
-          console.error(`Geolocation error: code ${error.code}, message: ${error.message}`);
-          let errorMessage = "An unknown error occurred while trying to get your location.";
-          switch (error.code) {
-            case error.PERMISSION_DENIED:
-              errorMessage = "Location permission denied. Please enable it in your browser settings to record your ride.";
-              break;
-            case error.POSITION_UNAVAILABLE:
-              errorMessage = "Location information is unavailable. Please check your GPS signal and try again.";
-              break;
-            case error.TIMEOUT:
-              errorMessage = "The request to get your location timed out. Please try again.";
-              break;
-          }
-          setGeolocationError(errorMessage);
-          stopRecording();
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 0,
-        }
-      );
-    } else if (currentRide?.startTime && currentRide?.endTime) {
-      setDuration(currentRide.endTime - currentRide.startTime);
-    } else {
-      setDuration(0);
     }
-
     return () => {
-      if (watchId.current) navigator.geolocation.clearWatch(watchId.current);
-      if (timerId.current) clearInterval(timerId.current);
+      if (timerId) clearInterval(timerId);
     };
-  }, [isRecording, rideId, setRides, stopRecording, currentRide?.startTime, currentRide?.endTime]);
+  }, [isRecording, currentRide?.startTime]);
+
+  // Effect for geolocation tracking
+  useEffect(() => {
+    if (!isRecording) return;
+
+    const handleError = (error: GeolocationPositionError) => {
+        let errorMessage = "An unknown error occurred while trying to get your location.";
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            errorMessage = "Location permission denied. Please enable it in your browser settings to record your ride.";
+            break;
+          case error.POSITION_UNAVAILABLE:
+            errorMessage = "Location information is unavailable. Please check your GPS signal and try again.";
+            break;
+          case error.TIMEOUT:
+            errorMessage = "The request to get your location timed out. Please try again.";
+            break;
+        }
+        setGeolocationError(errorMessage);
+        stopRecording();
+    };
+
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const newPoint: RoutePoint = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          timestamp: position.timestamp,
+        };
+        // Use rideId from outer scope, effect depends on it.
+        setRides(prevRides =>
+          prevRides.map(r =>
+            r.id === rideId ? { ...r, routePoints: [...r.routePoints, newPoint] } : r
+          )
+        );
+      },
+      handleError,
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      }
+    );
+
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [isRecording, rideId, setRides, stopRecording]);
 
 
   if (!currentRide) {
@@ -119,9 +120,6 @@ const RecordRide: React.FC = () => {
         </div>
     );
   }
-  
-  const hasStarted = !!currentRide.startTime;
-  const isFinished = !!currentRide.endTime;
 
   return (
     <div className="flex flex-col h-[calc(100vh-9rem)]">
@@ -138,26 +136,33 @@ const RecordRide: React.FC = () => {
         <h2 className="text-xl font-bold truncate text-yellow-500 dark:text-yellow-400">{currentRide.destination}</h2>
         <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">From: {currentRide.meetingPoint}</p>
         <div className="grid grid-cols-2 gap-4 text-center mb-4">
-          <div>
+          <div className="flex flex-col items-center p-2 rounded-lg bg-gray-100 dark:bg-gray-700/50">
+            <RouteIcon className="w-6 h-6 mb-1 text-yellow-500 dark:text-yellow-400"/>
             <p className="text-sm text-gray-500 dark:text-gray-400">Distance</p>
             <p className="text-2xl font-semibold">{distance.toFixed(2)} km</p>
           </div>
-          <div>
+          <div className="flex flex-col items-center p-2 rounded-lg bg-gray-100 dark:bg-gray-700/50">
+            <ClockIcon className="w-6 h-6 mb-1 text-yellow-500 dark:text-yellow-400"/>
             <p className="text-sm text-gray-500 dark:text-gray-400">Duration</p>
             <p className="text-2xl font-semibold">{formatDuration(duration)}</p>
           </div>
         </div>
+        
         {isRecording ? (
           <button
             onClick={stopRecording}
-            className="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-4 px-4 rounded-lg transition-transform transform hover:scale-105"
+            className="w-full flex items-center justify-center bg-red-500 hover:bg-red-600 text-white font-bold py-4 px-4 rounded-lg transition-transform transform hover:scale-105"
           >
+            <span className="relative flex h-3 w-3 mr-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-white"></span>
+            </span>
             Stop Ride
           </button>
         ) : (
           <button
             onClick={startRecording}
-            className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-4 px-4 rounded-lg transition-transform transform hover:scale-105 disabled:bg-gray-400 dark:disabled:bg-gray-600"
+            className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-4 px-4 rounded-lg transition-transform transform hover:scale-105 disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed"
             disabled={isFinished}
           >
             {isFinished ? 'Ride Finished' : (hasStarted ? 'Start New Ride' : 'Start Ride')}

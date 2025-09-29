@@ -5,6 +5,7 @@ import Navbar from './components/Navbar';
 import Schedule from './components/Schedule';
 import RecordRide from './components/RecordRide';
 import Team from './components/Team';
+import Chat from './components/Chat';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import type { User } from './types';
 import { LogoIcon, SunIcon, MoonIcon } from './components/Icons';
@@ -87,7 +88,7 @@ const Header: React.FC = () => {
 
 const AppContent: React.FC = () => {
     const location = useLocation();
-    const shouldShowNavbar = ['/', '/record', '/team'].includes(location.pathname);
+    const shouldShowNavbar = ['/', '/record', '/team', '/chat'].includes(location.pathname);
 
     return (
         <div className="bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white min-h-screen">
@@ -98,6 +99,7 @@ const AppContent: React.FC = () => {
                     <Route path="/" element={<Schedule />} />
                     <Route path="/record" element={<RecordRide />} />
                     <Route path="/team" element={<Team />} />
+                    <Route path="/chat" element={<Chat />} />
                     <Route path="*" element={<Navigate to="/" />} />
                 </Routes>
               </div>
@@ -110,11 +112,17 @@ const AppContent: React.FC = () => {
 const App: React.FC = () => {
   const [user, setUser] = useLocalStorage<User | null>('user', null);
 
+  const handleWelcomeComplete = (newUser: { name: string; age: number }) => {
+    const leaderUser: User = { ...newUser, role: 'leader' };
+    setUser(leaderUser);
+    localStorage.setItem('leaderName', newUser.name);
+  };
+
   return (
     <ThemeProvider>
       {
         !user 
-        ? <Welcome onWelcomeComplete={setUser} />
+        ? <Welcome onWelcomeComplete={handleWelcomeComplete} />
         : (
             <HashRouter>
                 <AppContent />

@@ -3,7 +3,7 @@ import type { User } from '../types';
 import { LogoIcon } from './Icons';
 
 interface WelcomeProps {
-  onWelcomeComplete: (user: User) => void;
+  onWelcomeComplete: (user: { name: string; age: number }) => void;
 }
 
 const Welcome: React.FC<WelcomeProps> = ({ onWelcomeComplete }) => {

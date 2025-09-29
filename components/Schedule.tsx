@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import type { Ride } from '../types';
-import { PlusIcon, MotorcycleIcon, MapPinIcon, TrashIcon, ClockIcon, RouteIcon } from './Icons';
+import { PlusIcon, MotorcycleIcon, MapPinIcon, TrashIcon, ClockIcon, RouteIcon, StarIcon, StarOutlineIcon } from './Icons';
 import { Link } from 'react-router-dom';
 import Map from './Map';
 import { calculateTotalDistance, formatDuration } from '../utils/geolocation';
@@ -41,6 +41,14 @@ const Schedule: React.FC = () => {
         setRides(rides.filter(ride => ride.id !== id));
     }
   }
+
+  const toggleFavorite = (id: string) => {
+    setRides(
+      rides.map(ride =>
+        ride.id === id ? { ...ride, isFavorite: !ride.isFavorite } : ride
+      )
+    );
+  };
 
   const openMapModal = (type: 'meeting' | 'destination') => {
     setPointToSet(type);
@@ -179,19 +187,31 @@ const Schedule: React.FC = () => {
           </div>
         ) : (
           <ul className="space-y-4">
-            {rides.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(ride => (
-              <li key={ride.id} className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md hover:shadow-lg transition-shadow">
-                <div className="flex justify-between items-start">
-                    <div className="flex-grow pr-2">
+            {rides.sort((a,b) => {
+                if (a.isFavorite && !b.isFavorite) return -1;
+                if (!a.isFavorite && b.isFavorite) return 1;
+                return new Date(b.date).getTime() - new Date(a.date).getTime();
+              }).map(ride => (
+              <li 
+                key={ride.id} 
+                className={`bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md hover:shadow-lg transition-shadow ${ride.isFavorite ? 'border-l-4 border-yellow-500 dark:border-yellow-400' : ''}`}
+              >
+                <div className="flex justify-between items-start gap-3">
+                    <div className="flex-grow">
                          {ride.endTime ? (
                             <div className="block cursor-default"><RideContent ride={ride} /></div>
                         ) : (
                             <Link to={`/record?rideId=${ride.id}`} className="block"><RideContent ride={ride} /></Link>
                         )}
                     </div>
-                    <button onClick={() => deleteRide(ride.id)} className="ml-2 p-1 text-gray-400 hover:text-red-500 flex-shrink-0" aria-label="Delete ride">
-                        <TrashIcon className="w-5 h-5" />
-                    </button>
+                    <div className="flex flex-col items-center space-y-2">
+                        <button onClick={() => toggleFavorite(ride.id)} className="p-1 text-gray-400 hover:text-yellow-500" aria-label={ride.isFavorite ? "Unmark as favorite" : "Mark as favorite"}>
+                            {ride.isFavorite ? <StarIcon className="w-6 h-6 text-yellow-500" /> : <StarOutlineIcon className="w-6 h-6" />}
+                        </button>
+                        <button onClick={() => deleteRide(ride.id)} className="p-1 text-gray-400 hover:text-red-500 flex-shrink-0" aria-label="Delete ride">
+                            <TrashIcon className="w-5 h-5" />
+                        </button>
+                    </div>
                 </div>
                 {renderRideDetails(ride)}
               </li>

@@ -2,6 +2,8 @@
 export interface User {
   name: string;
   age: number;
+  avatar?: string;
+  role?: 'leader' | 'member';
 }
 
 export interface RoutePoint {
@@ -18,16 +20,19 @@ export interface Ride {
   routePoints: RoutePoint[];
   startTime?: number;
   endTime?: number;
+  isFavorite?: boolean;
 }
 
 export interface TeamMember {
   id: string;
+  name: string;
   contact: string; // email or phone
 }
 
 export interface ChatMessage {
   id: string;
-  text: string;
+  text?: string;
+  imageUrl?: string;
   sender: string;
   timestamp: number;
 }
