@@ -1,8 +1,9 @@
 
-export interface User {
+export interface Profile {
+  id: string; // Corresponds to Supabase auth user.id
   name: string;
   age: number;
-  avatar?: string;
+  avatar_url?: string;
   role?: 'leader' | 'member';
 }
 
@@ -13,7 +14,7 @@ export interface RoutePoint {
 }
 
 export interface Ride {
-  id: string;
+  id: string; // UUID from Supabase
   date: string;
   meetingPoint: string;
   destination: string;
@@ -21,18 +22,16 @@ export interface Ride {
   startTime?: number;
   endTime?: number;
   isFavorite?: boolean;
-}
-
-export interface TeamMember {
-  id: string;
-  name: string;
-  contact: string; // email or phone
+  recorder_id?: string; // User ID of the person who recorded the ride
+  distance?: number; // in km
+  duration?: number; // in milliseconds
 }
 
 export interface ChatMessage {
   id: string;
   text?: string;
   imageUrl?: string;
-  sender: string;
-  timestamp: number;
+  user_id: string;
+  timestamp: string; // ISO 8601 string from Supabase
+  profiles?: Profile; // Populated by a JOIN query
 }

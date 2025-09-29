@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import type { User } from '../types';
 import { LogoIcon } from './Icons';
 
 interface WelcomeProps {

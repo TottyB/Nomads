@@ -1,13 +1,13 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import Welcome from './components/Welcome';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import Auth from './components/Auth';
 import Navbar from './components/Navbar';
 import Schedule from './components/Schedule';
 import RecordRide from './components/RecordRide';
 import Team from './components/Team';
 import Chat from './components/Chat';
-import { useLocalStorage } from './hooks/useLocalStorage';
-import type { User } from './types';
+import Leaderboard from './components/Leaderboard';
 import { LogoIcon, SunIcon, MoonIcon } from './components/Icons';
 
 // --- Theme Management ---
@@ -26,26 +26,24 @@ const useTheme = () => {
   return context;
 };
 
-const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+// Fix: Update ThemeProvider to use a more standard signature for components with children.
+// Updated the signature to a standard functional component without using React.FC to resolve a typing issue.
+const ThemeProvider = ({ children }: { children: ReactNode }) => {
   const [theme, setTheme] = useState<Theme>(() => {
     const storedTheme = localStorage.getItem('theme');
-    // Check for valid theme values to prevent unexpected behavior
     if (storedTheme === 'light' || storedTheme === 'dark') {
         return storedTheme;
     }
-    // Fallback to system preference
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   });
 
   useEffect(() => {
     const root = window.document.documentElement;
-    // The 'dark' class is what Tailwind CSS uses to apply dark mode styles.
     if (theme === 'dark') {
       root.classList.add('dark');
     } else {
       root.classList.remove('dark');
     }
-    // Persist the user's choice in localStorage.
     localStorage.setItem('theme', theme);
   }, [theme]);
   
@@ -60,10 +58,31 @@ const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   );
 };
 
+// --- Online Status Hook ---
+const useOnlineStatus = () => {
+    const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+    useEffect(() => {
+        const handleOnline = () => setIsOnline(true);
+        const handleOffline = () => setIsOnline(false);
+
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+
+        return () => {
+            window.removeEventListener('online', handleOnline);
+            window.removeEventListener('offline', handleOffline);
+        };
+    }, []);
+
+    return isOnline;
+};
 
 // --- Header Component ---
-const Header: React.FC = () => {
+// Fix: Changed from React.FC to a plain function component to avoid potential typing issues.
+const Header = () => {
     const { theme, toggleTheme } = useTheme();
+    const { profile, supabase } = useAuth();
 
     return (
         <header className="fixed top-0 left-0 right-0 z-40 bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm shadow-md border-b border-gray-200 dark:border-gray-800">
@@ -74,32 +93,47 @@ const Header: React.FC = () => {
                         Nomads <span className="text-yellow-500 dark:text-yellow-400">Bikers</span>
                     </span>
                 </div>
-                <button
-                    onClick={toggleTheme}
-                    className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-yellow-500"
-                    aria-label="Toggle theme"
-                >
-                    {theme === 'light' ? <MoonIcon className="w-6 h-6" /> : <SunIcon className="w-6 h-6" />}
-                </button>
+                 <div className="flex items-center gap-4">
+                    {profile && (
+                        <button onClick={() => supabase.auth.signOut()} className="text-sm font-semibold text-gray-600 dark:text-gray-300 hover:text-yellow-500">
+                            Logout
+                        </button>
+                    )}
+                    <button
+                        onClick={toggleTheme}
+                        className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                        aria-label="Toggle theme"
+                    >
+                        {theme === 'light' ? <MoonIcon className="w-6 h-6" /> : <SunIcon className="w-6 h-6" />}
+                    </button>
+                </div>
             </div>
         </header>
     );
 };
 
-const AppContent: React.FC = () => {
+// Fix: Changed from React.FC to a plain function component to avoid potential typing issues.
+const AppContent = () => {
     const location = useLocation();
-    const shouldShowNavbar = ['/', '/record', '/team', '/chat'].includes(location.pathname);
+    const isOnline = useOnlineStatus();
+    const shouldShowNavbar = ['/', '/record', '/team', '/chat', '/leaderboard'].includes(location.pathname);
 
     return (
         <div className="bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white min-h-screen">
             <Header />
             <main className="pt-16 pb-20">
-              <div className="max-w-4xl mx-auto">
+              {!isOnline && (
+                  <div className="bg-red-500 text-white text-center py-2 fixed top-16 left-0 right-0 z-30">
+                      You are offline. Some features may be disabled.
+                  </div>
+              )}
+              <div className={`max-w-4xl mx-auto ${!isOnline ? 'pt-8' : ''}`}>
                 <Routes>
                     <Route path="/" element={<Schedule />} />
                     <Route path="/record" element={<RecordRide />} />
                     <Route path="/team" element={<Team />} />
                     <Route path="/chat" element={<Chat />} />
+                    <Route path="/leaderboard" element={<Leaderboard />} />
                     <Route path="*" element={<Navigate to="/" />} />
                 </Routes>
               </div>
@@ -109,27 +143,25 @@ const AppContent: React.FC = () => {
     )
 }
 
-const App: React.FC = () => {
-  const [user, setUser] = useLocalStorage<User | null>('user', null);
+// Fix: Changed from React.FC to a plain function component to avoid potential typing issues.
+const MainApp = () => {
+    const { session } = useAuth();
 
-  const handleWelcomeComplete = (newUser: { name: string; age: number }) => {
-    const leaderUser: User = { ...newUser, role: 'leader' };
-    setUser(leaderUser);
-    localStorage.setItem('leaderName', newUser.name);
-  };
+    return !session ? <Auth /> : (
+        <HashRouter>
+            <AppContent />
+        </HashRouter>
+    );
+}
 
+// Fix: Changed from React.FC to a plain function component to avoid potential typing issues.
+const App = () => {
   return (
-    <ThemeProvider>
-      {
-        !user 
-        ? <Welcome onWelcomeComplete={handleWelcomeComplete} />
-        : (
-            <HashRouter>
-                <AppContent />
-            </HashRouter>
-        )
-      }
-    </ThemeProvider>
+    <AuthProvider>
+      <ThemeProvider>
+        <MainApp />
+      </ThemeProvider>
+    </AuthProvider>
   );
 };
 

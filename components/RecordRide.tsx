@@ -1,21 +1,37 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import Map from './Map';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import type { Ride, RoutePoint } from '../types';
 import { calculateTotalDistance, formatDuration } from '../utils/geolocation';
 import { MotorcycleIcon, ClockIcon, RouteIcon } from './Icons';
+import { useAuth } from '../contexts/AuthContext';
 
 const RecordRide: React.FC = () => {
-  const [rides, setRides] = useLocalStorage<Ride[]>('rides', []);
+  const { supabase, profile, isOnline } = useAuth();
+  const navigate = useNavigate();
+  
+  // Rides are now a combination of local state (for live updates) and a cached representation.
+  const [rides, setRides] = useLocalStorage<Ride[]>('ridesCache', []);
+  const [liveRoute, setLiveRoute] = useState<RoutePoint[]>([]);
   const [liveDuration, setLiveDuration] = useState(0);
   const [geolocationError, setGeolocationError] = useState<string | null>(null);
 
   const location = useLocation();
   const rideId = new URLSearchParams(location.search).get('rideId');
 
-  // --- Derived State ---
-  const currentRide = useMemo(() => rides.find(r => r.id === rideId) || null, [rides, rideId]);
+  // Find the base ride from the cache
+  const baseRide = useMemo(() => rides.find(r => r.id === rideId) || null, [rides, rideId]);
+
+  // Create a "live" version of the ride for display, combining base data with live tracking data
+  const currentRide = useMemo(() => {
+    if (!baseRide) return null;
+    return {
+      ...baseRide,
+      routePoints: liveRoute.length > 0 ? liveRoute : baseRide.routePoints,
+    };
+  }, [baseRide, liveRoute]);
+
   const isRecording = useMemo(() => !!currentRide?.startTime && !currentRide?.endTime, [currentRide]);
   const distance = useMemo(() => (currentRide ? calculateTotalDistance(currentRide.routePoints) : 0), [currentRide]);
   const duration = useMemo(() => {
@@ -27,8 +43,7 @@ const RecordRide: React.FC = () => {
   const hasStarted = !!currentRide?.startTime;
   const isFinished = !!currentRide?.endTime;
 
-  // --- Actions ---
-  const updateRide = useCallback((rideData: Partial<Ride>) => {
+  const updateRideInCache = useCallback((rideData: Partial<Ride>) => {
     setRides(prevRides =>
       prevRides.map(r => (r.id === rideId ? { ...r, ...rideData } : r))
     );
@@ -37,24 +52,56 @@ const RecordRide: React.FC = () => {
   const startRecording = useCallback(() => {
     if (!currentRide) return;
     setGeolocationError(null);
-    updateRide({
+    setLiveRoute([]);
+    const startTime = Date.now();
+    updateRideInCache({
       routePoints: [],
-      startTime: Date.now(),
+      startTime: startTime,
       endTime: undefined,
+      recorder_id: profile?.id,
     });
     setLiveDuration(0);
-  }, [currentRide, updateRide]);
+  }, [currentRide, updateRideInCache, profile]);
 
-  const stopRecording = useCallback(() => {
-    updateRide({ endTime: Date.now() });
-  }, [updateRide]);
+  const stopRecording = useCallback(async () => {
+    const endTime = Date.now();
+    const finalDuration = endTime - (currentRide?.startTime || endTime);
+    const finalDistance = calculateTotalDistance(liveRoute);
 
-  // --- Effects ---
+    updateRideInCache({ endTime });
+    
+    if (!isOnline) {
+      alert("You are offline. Ride data saved locally and will sync when you're back online.");
+       // Note: A full offline queue is complex. For now, we'll just hope the user comes online before navigating away.
+       // A more robust solution would use service workers or IndexedDB queues.
+      return;
+    }
+    
+    const { error } = await supabase
+        .from('rides')
+        .update({
+            endTime: endTime,
+            routePoints: liveRoute,
+            recorder_id: profile?.id,
+            duration: finalDuration,
+            distance: finalDistance,
+        })
+        .eq('id', rideId);
+
+    if (error) {
+        alert("Error saving ride to cloud: " + error.message);
+    } else {
+        alert("Ride saved successfully!");
+        navigate('/');
+    }
+  }, [currentRide, liveRoute, updateRideInCache, supabase, rideId, profile, isOnline, navigate]);
+
+
   // Effect for live duration timer
   useEffect(() => {
     let timerId: number | null = null;
     if (isRecording && currentRide?.startTime) {
-      setLiveDuration(Date.now() - currentRide.startTime); // Set initial duration immediately
+      setLiveDuration(Date.now() - currentRide.startTime);
       timerId = window.setInterval(() => {
         setLiveDuration(Date.now() - currentRide!.startTime!);
       }, 1000);
@@ -72,17 +119,17 @@ const RecordRide: React.FC = () => {
         let errorMessage = "An unknown error occurred while trying to get your location.";
         switch (error.code) {
           case error.PERMISSION_DENIED:
-            errorMessage = "Location permission denied. Please enable it in your browser settings to record your ride.";
+            errorMessage = "Location permission denied. Please enable it to record your ride.";
             break;
           case error.POSITION_UNAVAILABLE:
-            errorMessage = "Location information is unavailable. Please check your GPS signal and try again.";
+            errorMessage = "Location information is unavailable. Check your GPS signal.";
             break;
           case error.TIMEOUT:
-            errorMessage = "The request to get your location timed out. Please try again.";
+            errorMessage = "The request to get your location timed out.";
             break;
         }
         setGeolocationError(errorMessage);
-        stopRecording();
+        if (isRecording) stopRecording();
     };
 
     const watchId = navigator.geolocation.watchPosition(
@@ -92,23 +139,14 @@ const RecordRide: React.FC = () => {
           lng: position.coords.longitude,
           timestamp: position.timestamp,
         };
-        // Use rideId from outer scope, effect depends on it.
-        setRides(prevRides =>
-          prevRides.map(r =>
-            r.id === rideId ? { ...r, routePoints: [...r.routePoints, newPoint] } : r
-          )
-        );
+        setLiveRoute(prevRoute => [...prevRoute, newPoint]);
       },
       handleError,
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0,
-      }
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
 
     return () => navigator.geolocation.clearWatch(watchId);
-  }, [isRecording, rideId, setRides, stopRecording]);
+  }, [isRecording, stopRecording]);
 
 
   if (!currentRide) {
@@ -163,7 +201,7 @@ const RecordRide: React.FC = () => {
           <button
             onClick={startRecording}
             className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-4 px-4 rounded-lg transition-transform transform hover:scale-105 disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed"
-            disabled={isFinished}
+            disabled={isFinished || !isOnline}
           >
             {isFinished ? 'Ride Finished' : (hasStarted ? 'Start New Ride' : 'Start Ride')}
           </button>

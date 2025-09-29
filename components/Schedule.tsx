@@ -1,15 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
+import { Link } from 'react-router-dom';
 import { useLocalStorage } from '../hooks/useLocalStorage';
+import { useAuth } from '../contexts/AuthContext';
 import type { Ride } from '../types';
 import { PlusIcon, MotorcycleIcon, MapPinIcon, TrashIcon, ClockIcon, RouteIcon, StarIcon, StarOutlineIcon } from './Icons';
-import { Link } from 'react-router-dom';
 import Map from './Map';
 import { calculateTotalDistance, formatDuration } from '../utils/geolocation';
 
-const generateId = () => Date.now().toString(36) + Math.random().toString(36).substring(2);
-
 const Schedule: React.FC = () => {
-  const [rides, setRides] = useLocalStorage<Ride[]>('rides', []);
+  const { supabase, isOnline } = useAuth();
+  const [rides, setRides] = useState<Ride[]>([]);
+  const [cachedRides, setCachedRides] = useLocalStorage<Ride[]>('ridesCache', []);
+  
   const [date, setDate] = useState('');
   const [meetingPoint, setMeetingPoint] = useState('');
   const [destination, setDestination] = useState('');
@@ -17,37 +19,70 @@ const Schedule: React.FC = () => {
   const [isMapModalOpen, setMapModalOpen] = useState(false);
   const [pointToSet, setPointToSet] = useState<'meeting' | 'destination' | null>(null);
   const [markerPosition, setMarkerPosition] = useState<[number, number] | undefined>(undefined);
+  const [loading, setLoading] = useState(true);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  useEffect(() => {
+    // Load from cache instantly for better UX
+    setRides(cachedRides);
+    setLoading(cachedRides.length === 0);
+
+    const fetchRides = async () => {
+      const { data, error } = await supabase.from('rides').select('*').order('date', { ascending: false });
+      if (error) {
+        console.error('Error fetching rides:', error);
+      } else {
+        setRides(data as Ride[]);
+        setCachedRides(data as Ride[]);
+      }
+      setLoading(false);
+    };
+    
+    fetchRides();
+
+    const channel = supabase.channel('realtime:rides');
+    channel
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rides' }, (payload) => {
+        console.log('Change received!', payload);
+        fetchRides();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [supabase, setCachedRides]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (date && meetingPoint && destination) {
-      const newRide: Ride = {
-        id: generateId(),
-        date,
-        meetingPoint,
-        destination,
-        routePoints: [],
-      };
-      setRides([...rides, newRide]);
-      setDate('');
-      setMeetingPoint('');
-      setDestination('');
-      setIsFormVisible(false);
+      const { data, error } = await supabase.from('rides').insert([{ date, meetingPoint, destination }]).select();
+      if (error) {
+        alert('Could not add ride: ' + error.message);
+      } else {
+        setDate('');
+        setMeetingPoint('');
+        setDestination('');
+        setIsFormVisible(false);
+      }
     }
   };
 
-  const deleteRide = (id: string) => {
+  const deleteRide = async (id: string) => {
     if (window.confirm('Are you sure you want to delete this ride? This action cannot be undone.')) {
-        setRides(rides.filter(ride => ride.id !== id));
+        const { error } = await supabase.from('rides').delete().eq('id', id);
+        if (error) {
+            alert('Could not delete ride: ' + error.message);
+        }
     }
   }
 
-  const toggleFavorite = (id: string) => {
-    setRides(
-      rides.map(ride =>
-        ride.id === id ? { ...ride, isFavorite: !ride.isFavorite } : ride
-      )
-    );
+  const toggleFavorite = async (id: string) => {
+    const rideToUpdate = rides.find(r => r.id === id);
+    if (!rideToUpdate) return;
+    const { error } = await supabase.from('rides').update({ isFavorite: !rideToUpdate.isFavorite }).eq('id', id);
+    if (error) {
+      alert('Could not update favorite status: ' + error.message);
+    }
   };
 
   const openMapModal = (type: 'meeting' | 'destination') => {
@@ -76,9 +111,9 @@ const Schedule: React.FC = () => {
 
   const renderRideDetails = (ride: Ride) => {
       if (!ride.endTime || !ride.startTime) return null;
-
-      const duration = ride.endTime - ride.startTime;
-      const distance = calculateTotalDistance(ride.routePoints);
+      
+      const duration = ride.duration || ride.endTime - ride.startTime;
+      const distance = ride.distance || calculateTotalDistance(ride.routePoints);
 
       return (
           <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 flex justify-around text-xs text-gray-500 dark:text-gray-400">
@@ -126,8 +161,9 @@ const Schedule: React.FC = () => {
         <h1 className="text-3xl font-bold text-yellow-500 dark:text-yellow-400">Ride Schedule</h1>
         <button
           onClick={() => setIsFormVisible(!isFormVisible)}
-          className="bg-yellow-500 dark:bg-yellow-400 text-white dark:text-gray-900 rounded-full p-2 hover:bg-yellow-600 dark:hover:bg-yellow-500 transition-transform transform hover:scale-110"
+          className="bg-yellow-500 dark:bg-yellow-400 text-white dark:text-gray-900 rounded-full p-2 hover:bg-yellow-600 dark:hover:bg-yellow-500 transition-transform transform hover:scale-110 disabled:bg-gray-400 disabled:cursor-not-allowed"
           aria-label="Add new ride"
+          disabled={!isOnline}
         >
           <PlusIcon className="w-6 h-6" />
         </button>
@@ -179,7 +215,7 @@ const Schedule: React.FC = () => {
       )}
 
       <div>
-        {rides.length === 0 ? (
+        {loading ? <p>Loading schedule...</p> : rides.length === 0 ? (
           <div className="text-center text-gray-500 dark:text-gray-400 mt-12">
             <MotorcycleIcon className="w-16 h-16 mx-auto mb-4" />
             <p>No rides scheduled yet.</p>
@@ -205,10 +241,10 @@ const Schedule: React.FC = () => {
                         )}
                     </div>
                     <div className="flex flex-col items-center space-y-2">
-                        <button onClick={() => toggleFavorite(ride.id)} className="p-1 text-gray-400 hover:text-yellow-500" aria-label={ride.isFavorite ? "Unmark as favorite" : "Mark as favorite"}>
+                        <button onClick={() => toggleFavorite(ride.id)} className="p-1 text-gray-400 hover:text-yellow-500 disabled:opacity-50" aria-label={ride.isFavorite ? "Unmark as favorite" : "Mark as favorite"} disabled={!isOnline}>
                             {ride.isFavorite ? <StarIcon className="w-6 h-6 text-yellow-500" /> : <StarOutlineIcon className="w-6 h-6" />}
                         </button>
-                        <button onClick={() => deleteRide(ride.id)} className="p-1 text-gray-400 hover:text-red-500 flex-shrink-0" aria-label="Delete ride">
+                        <button onClick={() => deleteRide(ride.id)} className="p-1 text-gray-400 hover:text-red-500 flex-shrink-0 disabled:opacity-50" aria-label="Delete ride" disabled={!isOnline}>
                             <TrashIcon className="w-5 h-5" />
                         </button>
                     </div>
